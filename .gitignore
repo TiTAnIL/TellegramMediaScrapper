@@ -1,0 +1,6 @@
+credentials.py
+__pycache__
+.vscode
+session_name.session
+media
+chats
