@@ -2,12 +2,25 @@ import os
 import sys
 import json
 import datetime
+import time
 import asyncio
 from telethon.sync import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
+# from telethon.tl.functions.messages import GetHistoryRequest
+from telethon import errors
 from pytz import timezone
-
+import re
 from credentials import api_id, api_hash
+
+def sanitize_filename(filename):
+    return re.sub(r'[\/:*?"<>|]', '_', filename)
+
+def serialize_datetime(obj):
+    if isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    elif isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    else:
+        return str(obj)
 
 async def main():
     client = TelegramClient('session_name', api_id, api_hash)
@@ -19,6 +32,29 @@ async def main():
     
     print('Connection to Telegram API successful!')
     
+    async def createChannelFolder(channel_name):
+        folder_name = os.path.join('media', sanitize_filename(channel_name))
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+        return folder_name
+
+    async def downloadMedia(channel_folder, message):
+        if hasattr(message, 'file'):
+            mime_type = message.file.mime_type
+            if 'image/' in mime_type:
+                file_extension = mime_type.split('/')[-1]
+            elif 'video/' in mime_type:
+                file_extension = mime_type.split('/')[-1]
+            else:
+                file_extension = 'unknown'
+            file_name = f"{channel_folder}/{sanitize_filename(str(message.id))}_{sanitize_filename(str(message.date))}.{file_extension}"
+
+            if os.path.exists(file_name):
+                print(f"Skipping file: {file_name} (already exists)")
+                return
+
+            await client.download_media(message, file_name)
+
     async def getTotalMediaSize(messages):
         total_size = 0
         media_messages = [message for message in messages if hasattr(message, 'file')]
@@ -32,7 +68,6 @@ async def main():
                     total_size += media_detail.file.size
         return total_size
 
-    
     async def fileCount():
         first_run = True
         if first_run:
@@ -48,11 +83,12 @@ async def main():
             pass
 
     def progress(current, total_files, total):
-        if round(current / total * 100, 1) % 1.5 == 0:
+        last_update_time = time.time()
+        if round(current / total * 100, 1) % 1.5 == 0 or time.time() - last_update_time >= 1.5:
+            last_update_time = time.time()
             os.system('cls' if os.name == 'nt' else 'clear')
             print('Downloading the photos and videos in the channel between the chosen dates...')
-            # print('Downloaded', total_files - current, 'out of', total_files, 'files:', (total_files - current) / total_files * 100, '%')
-            print('Downloaded', current, 'out of', total, 'bytes:', current / total * 100, '%')
+            print('Downloaded', current, 'out of', total, '\n', current / total * 100, '%')
 
     my_channels = await client.get_dialogs()
 
@@ -62,7 +98,6 @@ async def main():
             print(dialog.name)
             
     channel_name = input('Enter the name of the channel you want to connect to: ')
-
     channel_entity = None
     
     for dialog in my_channels:
@@ -75,6 +110,8 @@ async def main():
         await client.disconnect()
         sys.exit()
     
+    channel_folder = await createChannelFolder(channel_name)
+
     date_start = input('Enter the start date (in format YYYY-MM-DD): ')
     date_end = input('Enter the end date (in format YYYY-MM-DD): ')
     
@@ -85,7 +122,8 @@ async def main():
     print('End date:', date_end)
     
     total_files = await fileCount()
-    
+    current_file_count = 0
+
     async def get_messages():
         messages = []
         print('Getting messages...')
@@ -120,19 +158,28 @@ async def main():
     print('Size of the photos and videos in the channel: {} bytes'.format(size))
     
     download = input('Do you want to download them? (Y/N): ')
-    
+
+    while download.lower() not in ['y', 'n']:
+        print('Please enter a valid input!')
+        download = input('Do you want to download them? (Y/N): ')
+
     if download.lower() == 'y':
         print('Downloading the photos and videos in the channel between the chosen dates...')
         
         for message in messages:
-            if hasattr(message, 'file'):
-                await client.download_media(message, progress_callback=lambda current, total: progress(current, total_files, total))
-        
+            try:
+                if hasattr(message, 'file'):
+                    await downloadMedia(channel_folder, message)
+                    current_file_count += 1
+                    progress(current_file_count, total_files, len(messages))
+            except errors.rpcerrorlist.FileReferenceExpiredError:
+                print(f"Skipped a message due to FileReferenceExpiredError: {message.id}")
+
         print('Download completed!')
         print('Saving the list in a .json file...')
         
         with open('data.json', 'w') as outfile:
-            json.dump(data, outfile)
+            json.dump(data, outfile, default=serialize_datetime)
         
         print('File saved!')
     elif download.lower() == 'n':
