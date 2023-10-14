@@ -5,7 +5,6 @@ import datetime
 import time
 import asyncio
 from telethon.sync import TelegramClient
-# from telethon.tl.functions.messages import GetHistoryRequest
 from telethon import errors
 from pytz import timezone
 import re
@@ -39,7 +38,7 @@ async def main():
         return folder_name
 
     async def downloadMedia(channel_folder, message):
-        if hasattr(message, 'file'):
+        if hasattr(message, 'file') and message.file:
             mime_type = message.file.mime_type
             if 'image/' in mime_type:
                 file_extension = mime_type.split('/')[-1]
@@ -54,6 +53,9 @@ async def main():
                 return
 
             await client.download_media(message, file_name)
+        else:
+            print(f"Skipped a message without a file: {message.id}")
+
 
     async def getTotalMediaSize(messages):
         total_size = 0
